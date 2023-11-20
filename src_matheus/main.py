@@ -9,8 +9,13 @@ df_targets = pd.read_csv("../data/targets.csv")
 item_genres = {}
 genres_set = set()
 items = []
+item_ratings = {}
 
 for index, row in df_content.iterrows():
+    if row['imdbRating'] != 'N/A':
+      item_ratings[row['ItemId']] = float(row['imdbRating'])
+    else:
+      item_ratings[row['ItemId']] = 5
     splitted_genres = row['Genre'].split(sep=', ')
     item_genres[row['ItemId']] = splitted_genres
     for genre in splitted_genres:
@@ -43,16 +48,17 @@ for user in user_targets:
   normalized_vector = (user_vectors[user]-np.min(user_vectors[user]))/(np.max(user_vectors[user])-np.min(user_vectors[user]))
   user_vectors[user] = normalized_vector
 
-similarities = []
+predictions = []
 for index, row in df_targets.iterrows():
   user_id = row['UserId']
   item_id = row['ItemId']
   item_vector = item_vectors[item_id]
   user_vector = user_vectors[user_id]
   similarity = np.dot(item_vector, user_vector)/(norm(item_vector)*norm(user_vector))
-  similarities.append(similarity)
-df_targets['Similarity'] = similarities
-df_targets = df_targets.sort_values(by='Similarity', ascending=False)
+  prediction = ((10 * similarity) + item_ratings[item_id])/2
+  predictions.append(prediction)
+df_targets['Prediction'] = predictions
+df_targets = df_targets.sort_values(by='Prediction', ascending=False)
 
 user_prediction_items = {}
 for index, row in df_targets.iterrows():
@@ -69,4 +75,4 @@ for user in user_targets:
     final_ranking.append((user, item))
 
 submission_df = pd.DataFrame(final_ranking, columns=['UserId', 'ItemId'])
-submission_df.to_csv('submission.csv', index=False)
+submission_df.to_csv('submission2.csv', index=False)
