@@ -31,29 +31,34 @@ for item in items:
 
 user_targets = df_targets['UserId'].unique().tolist()
 df_target_ratings = df_ratings[df_ratings['UserId'].isin(user_targets)]
-user_vectors = {}
+user_averages_by_genre = {}
+user_totals_by_genre = {}
+user_movies_by_genre = {}
 for user in user_targets:
-  user_vectors[user] = np.zeros(len(genres_list))
-for genre in genres_list:
-  user_vectors[genre] = np.zeros(len(user_targets))
-
+  user_averages_by_genre[user] = np.zeros(len(genres_list))
+  user_totals_by_genre[user] = np.zeros(len(genres_list))
+  user_movies_by_genre[user] = np.zeros(len(genres_list))
 
 for index, row in df_target_ratings.iterrows():
   user_id = row['UserId']
   item_id = row['ItemId']
   for genre in item_genres[item_id]:
-    user_vectors[user_id][genres_list.index(genre)] += 1
+    user_totals_by_genre[user_id][genres_list.index(genre)] += row['Rating']
+    user_movies_by_genre[user_id][genres_list.index(genre)] += 1
 
 for user in user_targets:
-  normalized_vector = (user_vectors[user]-np.min(user_vectors[user]))/(np.max(user_vectors[user])-np.min(user_vectors[user]))
-  user_vectors[user] = normalized_vector
+  for i in range(len(genres_list)):
+    if user_movies_by_genre[user][i] > 0:
+      user_averages_by_genre[user][i] = user_totals_by_genre[user][i]/user_movies_by_genre[user][i] 
+  normalized_vector = (user_averages_by_genre[user]-np.min(user_averages_by_genre[user]))/(np.max(user_averages_by_genre[user])-np.min(user_averages_by_genre[user]))
+  user_averages_by_genre[user] = normalized_vector
 
 predictions = []
 for index, row in df_targets.iterrows():
   user_id = row['UserId']
   item_id = row['ItemId']
   item_vector = item_vectors[item_id]
-  user_vector = user_vectors[user_id]
+  user_vector = user_averages_by_genre[user_id]
   similarity = np.dot(item_vector, user_vector)/(norm(item_vector)*norm(user_vector))
   prediction = ((10 * similarity) + item_ratings[item_id])/2
   predictions.append(prediction)
@@ -75,4 +80,4 @@ for user in user_targets:
     final_ranking.append((user, item))
 
 submission_df = pd.DataFrame(final_ranking, columns=['UserId', 'ItemId'])
-submission_df.to_csv('submission2.csv', index=False)
+submission_df.to_csv('submission3.csv', index=False)
