@@ -1,99 +1,152 @@
 import pandas as pd
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
-import os
+from numpy.linalg import norm
 
-# Obtendo o caminho para a pasta 'data' e os arquivos dentro dela
-print('Obtendo o caminho para a pasta data e os arquivos dentro dela')
-data_path = os.path.join(os.path.dirname(__file__), '..', 'data')
-ratings_path = os.path.join(data_path, 'ratings.jsonl')
-content_path = os.path.join(data_path, 'content.jsonl')
-targets_path = os.path.join(data_path, 'targets.csv')
+df_content = pd.read_json("../data/content.jsonl", lines=True)
+df_ratings = pd.read_json("../data/ratings.jsonl", lines=True)
+df_targets = pd.read_csv("../data/targets.csv")
 
-# Leitura dos dados
-print('Leitura dos dados')
-ratings = pd.read_json(ratings_path, lines=True)
-content = pd.read_json(content_path, lines=True)
-targets = pd.read_csv(targets_path)
+item_genres = {}
+genres_set = set()
+items = []
+item_ratings = {}
+item_weights = {}  
 
-# Manipulação dos valores NaN para imdbRating e imdbVotes
-print('Manipulação dos valores NaN para imdbRating e imdbVotes')
-content['imdbRating'] = content['imdbRating'].apply(lambda x: float(x) if x != 'N/A' else np.nan)
-content['imdbVotes'] = content['imdbVotes'].apply(lambda x: int(x.replace(',', '')) if x != 'N/A' else 0)
+def calculate_weight(row):
+    imdb_rating_str = row['imdbRating']
+    imdb_votes_str = row['imdbVotes']
 
-# Representação dos itens (filmes) usando gêneros e características do IMDb
-print('Representação dos itens (filmes) usando gêneros e características do IMDb')
-tfidf_vectorizer = TfidfVectorizer(stop_words='english')
-item_tfidf_matrix_genre = tfidf_vectorizer.fit_transform(content['Genre'].fillna(''))
-item_imdb_features = content[['imdbRating', 'imdbVotes']].fillna(0).values
-item_tfidf_matrix = np.hstack((item_tfidf_matrix_genre.toarray(), item_imdb_features))
+    if imdb_rating_str == 'N/A':
+        return 5
+    
+    imdb_rating = float(imdb_rating_str)
 
-# Representação dos usuários usando os gêneros dos filmes que avaliaram
-print('Representação dos usuários usando os gêneros dos filmes que avaliaram')
-user_ratings = ratings.merge(content, how='left', on='ItemId')
-user_tfidf_matrix_genre = tfidf_vectorizer.transform(user_ratings.groupby('UserId')['Genre'].apply(lambda x: ' '.join(x)).fillna(''))
-user_imdb_features = user_ratings.groupby('UserId')[['imdbRating', 'imdbVotes']].mean().fillna(0).values
-user_tfidf_matrix = np.hstack((user_tfidf_matrix_genre.toarray(), user_imdb_features))
+    try:
+        num_votes = int(imdb_votes_str.replace(',', ''))
+    except ValueError:
+        num_votes = 0  
 
-# Aplicação do algoritmo de Rocchio
-print('Aplicação do algoritmo de Rocchio')
-alpha = 1.0
-beta = 0.5
-gamma = 0.2  
+    if imdb_rating == 10:
+        if num_votes <= 1000:
+            return 8
+        elif 1000 < num_votes <= 10000:
+            return 9
+        else:
+            return 10
+    elif imdb_rating == 9:
+        if num_votes <= 1000:
+            return 7
+        elif 1000 < num_votes <= 10000:
+            return 8
+        else:
+            return 9
+    elif imdb_rating == 8:
+        if num_votes <= 1000:
+            return 6
+        elif 1000 < num_votes <= 10000:
+            return 7
+        else:
+            return 8
+    elif imdb_rating == 7:
+        if num_votes <= 1000:
+            return 5
+        elif 1000 < num_votes <= 10000:
+            return 6
+        else:
+            return 7
+    elif imdb_rating == 6:
+        if num_votes <= 1000:
+            return 4
+        elif 1000 < num_votes <= 10000:
+            return 5
+        else:
+            return 6
+    elif imdb_rating == 5:
+        if num_votes <= 1000:
+            return 3
+        elif 1000 < num_votes <= 10000:
+            return 4
+        else:
+            return 5
+    elif 1 <= imdb_rating <= 4.9:
+        if num_votes <= 1000:
+            return 3
+        elif 1000 < num_votes <= 10000:
+            return 2
+        else:
+            return 1
+    else:
+        return 1
 
-# Calcular o vetor de perfil do usuário 
-print('Calcular o vetor de perfil do usuário usando o algoritmo de Rocchio')
-user_ratings_grouped = user_ratings.groupby('UserId')
-user_ratings_mean = user_ratings_grouped['Rating'].mean()
+for index, row in df_content.iterrows():
+    if row['imdbRating'] != 'N/A':
+      item_ratings[row['ItemId']] = float(row['imdbRating'])
+    else:
+      item_ratings[row['ItemId']] = 5
+    splitted_genres = row['Genre'].split(sep=', ')
+    item_genres[row['ItemId']] = splitted_genres
+    for genre in splitted_genres:
+       genres_set.add(genre)
+    items.append(row['ItemId'])
 
-# Vetor de consulta original
-print('Vetor de consulta original')
-user_profile_genre = alpha * user_tfidf_matrix_genre.T @ user_ratings_mean
+    item_weights[row['ItemId']] = calculate_weight(row)
 
-# Vetores de documentos relacionados e não relacionados
-print('Vetores de documentos relacionados e não relacionados')
-DR = user_ratings_grouped.filter(lambda x: x['Rating'].max() >= 4)['ItemId'].values
-DNR = user_ratings_grouped.filter(lambda x: x['Rating'].max() < 4)['ItemId'].values
+genres_list = list(genres_set)
+item_vectors = {}
+for item in items:
+  item_vectors[item] = np.zeros(len(genres_list))
+  for genre in item_genres[item]:
+    item_vectors[item][genres_list.index(genre)] = 1
 
-# Vetor de consulta modificado usando o algoritmo de Rocchio
-print('Vetor de consulta modificado usando o algoritmo de Rocchio')
-user_profile_genre_mod = (
-    alpha * user_profile_genre +
-    beta / len(DR) * np.sum(item_tfidf_matrix[np.isin(content['ItemId'], DR)], axis=0) -
-    gamma / len(DNR) * np.sum(item_tfidf_matrix[np.isin(content['ItemId'], DNR)], axis=0)
-)
+user_targets = df_targets['UserId'].unique().tolist()
+df_target_ratings = df_ratings[df_ratings['UserId'].isin(user_targets)]
+user_averages_by_genre = {}
+user_totals_by_genre = {}
+user_movies_by_genre = {}
+for user in user_targets:
+  user_averages_by_genre[user] = np.zeros(len(genres_list))
+  user_totals_by_genre[user] = np.zeros(len(genres_list))
+  user_movies_by_genre[user] = np.zeros(len(genres_list))
 
-# Combinar os vetores de perfil do usuário
-print('Combinar os vetores de perfil do usuário')
-user_profile = np.hstack((user_profile_genre_mod, user_imdb_features))
-user_profile = user_profile.reshape(1, -1)
+for index, row in df_target_ratings.iterrows():
+  user_id = row['UserId']
+  item_id = row['ItemId']
+  for genre in item_genres[item_id]:
+    user_totals_by_genre[user_id][genres_list.index(genre)] += row['Rating']
+    user_movies_by_genre[user_id][genres_list.index(genre)] += 1
 
-# Substituir NaN por 0 nas matrizes
-print('Substituir NaN por 0 nas matrizes')
-item_tfidf_matrix = np.nan_to_num(item_tfidf_matrix)
-user_tfidf_matrix = np.nan_to_num(user_tfidf_matrix)
+for user in user_targets:
+  for i in range(len(genres_list)):
+    if user_movies_by_genre[user][i] > 0:
+      user_averages_by_genre[user][i] = user_totals_by_genre[user][i]/user_movies_by_genre[user][i] 
+  normalized_vector = (user_averages_by_genre[user]-np.min(user_averages_by_genre[user]))/(np.max(user_averages_by_genre[user])-np.min(user_averages_by_genre[user]))
+  user_averages_by_genre[user] = normalized_vector
 
-# Geração de recomendações para cada usuário
-print('Geração de recomendações para cada usuário')
-results = []
-for user_id, group in targets.groupby('UserId'):
-    # Calcular a similaridade entre o perfil do usuário e os itens
-    relevance_scores = cosine_similarity(user_profile, item_tfidf_matrix)
+predictions = []
+for index, row in df_targets.iterrows():
+  user_id = row['UserId']
+  item_id = row['ItemId']
+  item_vector = item_vectors[item_id]
+  user_vector = user_averages_by_genre[user_id]
+  similarity = np.dot(item_vector, user_vector)/(norm(item_vector)*norm(user_vector))
+  prediction = ((10 * similarity) + item_weights[item_id])/2
+  predictions.append(prediction)
+df_targets['Prediction'] = predictions
+df_targets = df_targets.sort_values(by='Prediction', ascending=False)
 
-    # Obter os índices dos filmes recomendados em ordem decrescente de relevância
-    recommended_indices = np.argsort(relevance_scores[0])[::-1][:100]
+user_prediction_items = {}
+for index, row in df_targets.iterrows():
+  user_id = row['UserId']
+  item_id = row['ItemId']
+  if user_id in user_prediction_items.keys():
+    user_prediction_items[user_id].append(item_id)
+  else:
+    user_prediction_items[user_id] = [item_id]
 
-    # Obter os IDs dos filmes recomendados
-    recommended_movies = content.iloc[recommended_indices]['ItemId'].values
+final_ranking = []
+for user in user_targets:
+  for item in user_prediction_items[user]:
+    final_ranking.append((user, item))
 
-    # Armazenar os resultados
-    results.extend([(user_id, movie_id) for movie_id in recommended_movies])
-
-# Criar um DataFrame com os resultados
-print('Criar um DataFrame com os resultados')
-submission_df = pd.DataFrame(results, columns=['UserId', 'ItemId'])
-
-# Salvar os resultados em um arquivo CSV
-print('Salvar os resultados em um arquivo CSV')
-submission_df.to_csv('submission.csv', index=False)
+submission_df = pd.DataFrame(final_ranking, columns=['UserId', 'ItemId'])
+submission_df.to_csv('submission3.csv', index=False)
